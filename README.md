@@ -6,6 +6,12 @@
 
 This project creates a reproducible data collection and preprocessing workflow using two public UCI course files. The source provides a Mathematics file with 395 records and a Portuguese-language file with 649 records, for **1,044 course records in total**. These are course records, not a guarantee of 1,044 unique individuals.
 
+## Live Dashboard
+
+Explore the deployed Streamlit dashboard here: **[Student Performance Data Explorer](https://yrnovatech-internship-task-2-sybjkzrr85xrpikmbdk2t2.streamlit.app/)**.
+
+The dashboard provides dataset overview metrics, a preview and course filter, grade/course charts, preprocessing report details, and a cleaned CSV download.
+
 ## Dataset Source
 
 - [UCI Student Performance dataset](https://archive.ics.uci.edu/dataset/320/student+performance)
@@ -20,7 +26,9 @@ The script downloads the official ZIP and reads the two semicolon-delimited CSV 
 - `data/raw/README.md` — raw source information
 - `data/processed/cleaned_dataset.csv` — generated cleaned dataset (created when the script runs)
 - `reports/preprocessing_report.json` — generated row counts, cleaning decisions, and validation results
-- `screenshots/` — add evidence screenshots here when preparing the submission
+- `screenshots/course_record_counts.png` and `screenshots/final_grade_distribution.png` — generated visualizations
+- `demo/Task2.mp4` — code walkthrough video
+- `app.py` — Streamlit dashboard for exploring the cleaned dataset
 
 ## What the Script Does
 
@@ -78,6 +86,7 @@ The script prints row counts, column counts, missing-cell and duplicate validati
 - [ ] Report values checked against the actual run
 - [ ] Screenshots captured from the real workflow
 - [ ] Files pushed to GitHub
+- [ ] Live dashboard checked
 - [ ] Internship portal submission completed
 
 ## Internship
