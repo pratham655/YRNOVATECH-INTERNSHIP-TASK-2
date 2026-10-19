@@ -1,59 +1,85 @@
 # Data Collection and Preprocessing
 
 **Internship:** YR NOVATECH AI & ML Internship — Task 2  
-**Status:** Project setup started.
+**Dataset:** UCI Student Performance  
+**Status:** Initial workflow committed; run the script locally to generate and validate the cleaned dataset and report.
 
-This project demonstrates a reproducible data preparation workflow using a public dataset with at least 1,000 records.
+This project creates a reproducible data collection and preprocessing workflow using two public UCI course files. The source provides a Mathematics file with 395 records and a Portuguese-language file with 649 records, for **1,044 course records in total**. These are course records, not a guarantee of 1,044 unique individuals.
 
-## Objectives
+## Dataset Source
 
-- Collect a suitable public dataset and document its source and license/usage terms.
-- Inspect the dataset structure, column types, missing values, duplicate records, and basic statistics.
-- Clean data with documented, justified decisions.
-- Engineer useful features when appropriate.
-- Save the cleaned dataset and a reproducible notebook or Python script.
-- Capture evidence of the workflow and results.
+- [UCI Student Performance dataset](https://archive.ics.uci.edu/dataset/320/student+performance)
+- [Official dataset ZIP](https://archive.ics.uci.edu/static/public/320/student+performance.zip)
 
-## Planned Deliverables
+The script downloads the official ZIP and reads the two semicolon-delimited CSV files directly. It does not save the raw files in the repository.
 
-- `notebooks/data_preprocessing.ipynb` — walkthrough of the analysis and preprocessing
-- `data/raw/` — original downloaded dataset (only if redistribution terms allow it; otherwise follow the source's download instructions)
-- `data/processed/cleaned_dataset.csv` — cleaned output
-- `src/preprocess.py` — reproducible preprocessing script
-- `reports/` — preprocessing summary and validation results
-- `screenshots/` — evidence for the internship portal
+## Repository Contents
 
-## Workflow
+- `src/preprocess.py` — reproducible collection, cleaning, feature engineering, and validation script
+- `requirements.txt` — Python dependencies
+- `data/raw/README.md` — raw source information
+- `data/processed/cleaned_dataset.csv` — generated cleaned dataset (created when the script runs)
+- `reports/preprocessing_report.json` — generated row counts, cleaning decisions, and validation results
+- `screenshots/` — add evidence screenshots here when preparing the submission
 
-1. Identify and cite the public dataset source.
-2. Load the dataset and verify it has at least 1,000 samples.
-3. Explore data types, summary statistics, missing values, and duplicates.
-4. Handle data quality issues using documented rules.
-5. Engineer and validate appropriate features.
-6. Export the cleaned data and report the before/after checks.
+## What the Script Does
 
-## Reproducibility
+1. Downloads the public dataset from the official UCI source.
+2. Reads `student-mat.csv` and `student-por.csv` using the correct semicolon separator.
+3. Adds `course` and `source_file` provenance columns before combining the files.
+4. Checks required grade and parent-education columns and verifies that the combined data has at least 1,000 records.
+5. Reports missing values and removes exact duplicate rows.
+6. Fills missing numeric values with each column's median and missing categorical values with the mode, only where needed.
+7. Engineers `avg_parent_education`, `early_grade_average`, `grade_change_g1_to_g3`, and `final_grade_band`.
+8. Saves a cleaned CSV and a JSON report with before/after checks.
 
-Python 3.10+ is recommended. Create a virtual environment and install dependencies from `requirements.txt`.
+Cleaning findings are generated from the downloaded data when the script runs; this README does not assume a particular missing-value or duplicate count.
+
+## Setup (Windows PowerShell)
+
+Use Python 3.10 or newer.
 
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python -m pip install --upgrade pip
+pip install -r requirements.txt
 python src/preprocess.py
 ```
 
-## Data Integrity
+If PowerShell blocks activation in the current terminal session:
 
-Dataset source, data dictionary, license/terms, row counts, and all cleaning decisions will be recorded. No results or data-quality findings should be claimed until they have been measured from the chosen dataset.
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+```
+
+## Output Files
+
+After a successful run, check:
+
+- `data/processed/cleaned_dataset.csv`
+- `reports/preprocessing_report.json`
+
+The script prints row counts, column counts, missing-cell and duplicate validation, and the output paths. Review the generated outputs before submission.
+
+## Feature Notes and Limitations
+
+- A row represents a subject/course record from one of the source files. Do not assume rows from different files represent different people.
+- The grade-band feature is a descriptive category derived from final grade `G3`; category boundaries are documented in the script.
+- The UCI documentation notes that `G1` and `G2` are strongly correlated with final grade `G3`. If using this dataset for prediction, consider target leakage and the intended prediction time.
+- Engineered associations are descriptive; this preprocessing workflow does not establish causation.
 
 ## Submission Checklist
 
-- [ ] Public dataset source documented
-- [ ] At least 1,000 samples verified
-- [ ] Raw data handling respects source license/terms
-- [ ] Cleaning and feature engineering documented
-- [ ] Notebook/script runs successfully
-- [ ] Cleaned dataset produced
-- [ ] Screenshots captured
-- [ ] README and final outputs reviewed
+- [ ] Script runs successfully on your laptop
+- [ ] At least 1,000 records verified in the generated report
+- [ ] Cleaned CSV generated and inspected
+- [ ] Report values checked against the actual run
+- [ ] Screenshots captured from the real workflow
+- [ ] Files pushed to GitHub
+- [ ] Internship portal submission completed
+
+## Internship
+
+Created for the YR NOVATECH AI & ML Internship — Task 2.
