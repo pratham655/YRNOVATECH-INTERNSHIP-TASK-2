@@ -1,42 +1,42 @@
-"""
-Download and preprocess the UCI Student Performance dataset.
 
-The workflow combines the mathematics and Portuguese course files as course
-records (395 + 649 = 1,044 records in the source files). A record is a
-student-course observation; rows across subjects should not be assumed to be
-unique students.
-
-Run from the repository root:
-    python src/preprocess.py
-"""
+"""Download, clean, and prepare the UCI Student Performance dataset."""
 
 from __future__ import annotations
 
 import io
 import json
-import sys
 import zipfile
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
+import matplotlib
+
+matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt
 import pandas as pd
 import requests
 
-ROOT = Path(__file__).resolve().parents[1]
-PROCESSED_DIR = ROOT / "data" / "processed"
-REPORT_DIR = ROOT / "reports"
 
-DATASET_URL = "https://archive.ics.uci.edu/static/public/320/student+performance.zip"
-SOURCE_PAGE = "https://archive.ics.uci.edu/dataset/320/student+performance"
+ROOT_DIR = Path(__file__).resolve().parents[1]
+PROCESSED_DIR = ROOT_DIR / "data" / "processed"
+REPORTS_DIR = ROOT_DIR / "reports"
+SCREENSHOTS_DIR = ROOT_DIR / "screenshots"
+
+DATASET_URL = (
+    "https://archive.ics.uci.edu/static/public/320/"
+    "student+performance.zip"
+)
+SOURCE_PAGE = "https://archive.ics.uci.edu/dataset/320/student-performance"
+
 EXPECTED_FILES = ("student-mat.csv", "student-por.csv")
-MINIMUM_ROWS = 1000
+
 REQUIRED_COLUMNS = {"G1", "G2", "G3", "Medu", "Fedu"}
 
 
 def download_course_files() -> dict[str, bytes]:
-    """Download the official UCI ZIP and return the two course CSVs as bytes."""
-    print(f"Downloading public dataset from: {SOURCE_PAGE}")
+    """Download the UCI ZIP and extract both course CSV files."""
+    print(f"Downloading public dataset from: {DATASET_URL}")
+
     try:
         response = requests.get(DATASET_URL, timeout=60)
         response.raise_for_status()
@@ -46,180 +46,278 @@ def download_course_files() -> dict[str, bytes]:
         ) from exc
 
     try:
-        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
-            names = set(archive.namelist())
+        with zipfile.ZipFile(io.BytesIO(response.content)) as outer_archive:
+            inner_zip_bytes = outer_archive.read("student.zip")
+
+        with zipfile.ZipFile(io.BytesIO(inner_zip_bytes)) as archive:
+            archive_names = archive.namelist()
             files: dict[str, bytes] = {}
+
             for expected in EXPECTED_FILES:
-                match = next(
-                    (name for name in names if name.endswith("/" + expected) or name == expected),
-                    None,
-                )
-                if match is None:
-                    raise RuntimeError(f"Expected file {expected!r} was not found in the downloaded ZIP.")
-                files[expected] = archive.read(match)
+                if expected not in archive_names:
+                    raise RuntimeError(
+                        f"Expected file {expected!r} was not found in student.zip."
+                    )
+                files[expected] = archive.read(expected)
+
             return files
-    except zipfile.BadZipFile as exc:
-        raise RuntimeError("The downloaded response was not a valid ZIP archive.") from exc
+
+    except (zipfile.BadZipFile, KeyError) as exc:
+        raise RuntimeError(
+            "The downloaded ZIP has an unexpected structure."
+        ) from exc
 
 
-def load_course_csv(csv_bytes: bytes, course: str, filename: str) -> pd.DataFrame:
-    """Parse one semicolon-delimited course file and mark its provenance."""
+def load_course_csv(
+    filename: str,
+    file_bytes: bytes,
+    course_name: str,
+) -> pd.DataFrame:
+    """Read a course CSV and validate its required columns."""
     try:
-        frame = pd.read_csv(io.BytesIO(csv_bytes), sep=";")
-    except Exception as exc:
-        raise RuntimeError(f"Could not parse {filename}.") from exc
+        df = pd.read_csv(
+            io.BytesIO(file_bytes),
+            sep=";",
+            encoding="utf-8",
+        )
+    except (UnicodeDecodeError, pd.errors.ParserError) as exc:
+        raise RuntimeError(f"Could not read {filename}.") from exc
 
-    frame.columns = [str(column).strip() for column in frame.columns]
-    missing_columns = REQUIRED_COLUMNS - set(frame.columns)
+    missing_columns = REQUIRED_COLUMNS - set(df.columns)
     if missing_columns:
-        raise ValueError(f"{filename} is missing expected columns: {sorted(missing_columns)}")
+        raise ValueError(
+            f"{filename} is missing required columns: "
+            f"{sorted(missing_columns)}"
+        )
 
-    frame["course"] = course
-    frame["source_file"] = filename
-    return frame
+    df["course"] = course_name
+    df["source_file"] = filename
+    return df
 
 
-def clean_dataset(data: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Clean missing values and duplicates and engineer documented features."""
-    report: dict[str, Any] = {
-        "rows_before_cleaning": int(len(data)),
-        "columns_before_cleaning": int(data.shape[1]),
-        "missing_values_before": {
-            str(column): int(count)
-            for column, count in data.isna().sum().items()
-            if int(count) > 0
-        },
-        "exact_duplicate_rows_before": int(data.duplicated().sum()),
-    }
+def clean_and_engineer_features(
+    df: pd.DataFrame,
+) -> tuple[pd.DataFrame, dict]:
+    """Clean records and create additional useful features."""
+    original_rows = len(df)
+    original_columns = len(df.columns)
 
-    # Preserve source/course columns so each row remains traceable to its course file.
-    before_duplicates = len(data)
-    data = data.drop_duplicates().copy()
-    report["duplicate_rows_removed"] = int(before_duplicates - len(data))
+    missing_before = int(df.isna().sum().sum())
+    duplicate_rows_before = int(df.duplicated().sum())
 
-    # The source files are expected to be complete, but this makes the script
-    # reproducible if future copies contain missing cells.
-    numeric_columns = data.select_dtypes(include="number").columns.tolist()
-    categorical_columns = data.select_dtypes(exclude="number").columns.tolist()
-    imputation: dict[str, str] = {}
+    # Remove exact duplicate records.
+    df = df.drop_duplicates().copy()
+    duplicates_removed = original_rows - len(df)
+
+    # Convert numeric-looking columns to numeric values where appropriate.
+    for column in df.columns:
+        if df[column].dtype == "object":
+            converted = pd.to_numeric(df[column], errors="coerce")
+
+            if converted.notna().sum() == df[column].notna().sum():
+                df[column] = converted
+
+    # Impute missing numeric values with the median and categorical values
+    # with the most frequent value.
+    numeric_columns = df.select_dtypes(include="number").columns
+    categorical_columns = df.select_dtypes(
+        exclude="number"
+    ).columns
+
+    imputation_counts = {}
 
     for column in numeric_columns:
-        missing_count = int(data[column].isna().sum())
+        missing_count = int(df[column].isna().sum())
+
         if missing_count:
-            median = data[column].median()
-            data[column] = data[column].fillna(median)
-            imputation[column] = f"median ({median})"
+            median_value = df[column].median()
+            df[column] = df[column].fillna(median_value)
+            imputation_counts[column] = missing_count
 
     for column in categorical_columns:
-        missing_count = int(data[column].isna().sum())
+        missing_count = int(df[column].isna().sum())
+
         if missing_count:
-            modes = data[column].mode(dropna=True)
-            fill_value = modes.iloc[0] if not modes.empty else "Unknown"
-            data[column] = data[column].fillna(fill_value)
-            imputation[column] = f"mode ({fill_value})"
+            modes = df[column].mode(dropna=True)
 
-    report["imputation_applied"] = imputation
-    report["missing_values_after"] = int(data.isna().sum().sum())
+            if not modes.empty:
+                df[column] = df[column].fillna(modes.iloc[0])
+                imputation_counts[column] = missing_count
+            else:
+                df[column] = df[column].fillna("Unknown")
+                imputation_counts[column] = missing_count
 
-    # Feature engineering based only on columns described in the UCI data.
-    data["avg_parent_education"] = (data["Medu"] + data["Fedu"]) / 2
-    data["early_grade_average"] = (data["G1"] + data["G2"]) / 2
-    data["grade_change_g1_to_g3"] = data["G3"] - data["G1"]
-    data["final_grade_band"] = pd.cut(
-        data["G3"],
+    # Feature engineering: average parent education level.
+    df["avg_parent_education"] = (
+        df["Medu"] + df["Fedu"]
+    ) / 2
+
+    # Early grade average: mean of the first two period grades.
+    df["early_grade_average"] = (
+        df["G1"] + df["G2"]
+    ) / 2
+
+    # Grade change between the first and final periods.
+    df["grade_change_g1_to_g3"] = df["G3"] - df["G1"]
+
+    # Categorize the final grade on the 0–20 scale.
+    df["final_grade_band"] = pd.cut(
+        df["G3"],
         bins=[-1, 9, 13, 16, 20],
-        labels=["At risk", "Developing", "Proficient", "Advanced"],
+        labels=["At risk", "Developing", "Good", "Excellent"],
         include_lowest=True,
     ).astype("string")
 
-    report["rows_after_cleaning"] = int(len(data))
-    report["columns_after_feature_engineering"] = int(data.shape[1])
-    report["duplicate_rows_after"] = int(data.duplicated().sum())
-    report["null_cells_after"] = int(data.isna().sum().sum())
-    report["course_record_counts"] = {
-        str(key): int(value)
-        for key, value in data["course"].value_counts().sort_index().items()
-    }
-    report["final_grade_summary_G3"] = {
-        "min": float(data["G3"].min()),
-        "max": float(data["G3"].max()),
-        "mean": round(float(data["G3"].mean()), 3),
-        "median": float(data["G3"].median()),
-    }
-    report["final_grade_band_counts"] = {
-        str(key): int(value)
-        for key, value in data["final_grade_band"].value_counts(dropna=False).sort_index().items()
+    # Ensure no missing values remain in the final dataset.
+    remaining_missing = int(df.isna().sum().sum())
+    if remaining_missing:
+        raise ValueError(
+            f"Cleaning left {remaining_missing} missing values."
+        )
+
+    remaining_duplicates = int(df.duplicated().sum())
+    if remaining_duplicates:
+        raise ValueError(
+            f"Cleaning left {remaining_duplicates} duplicate rows."
+        )
+
+    if len(df) < 1000:
+        raise ValueError(
+            f"Expected at least 1,000 records, but found {len(df)}."
+        )
+
+    report = {
+        "dataset_source": SOURCE_PAGE,
+        "download_url": DATASET_URL,
+        "original_rows": int(original_rows),
+        "rows_after_duplicate_removal": int(len(df)),
+        "duplicate_rows_before_cleaning": int(duplicate_rows_before),
+        "duplicate_rows_removed": int(duplicates_removed),
+        "missing_cells_before_cleaning": int(missing_before),
+        "missing_values_imputed_by_column": imputation_counts,
+        "missing_cells_after_cleaning": int(remaining_missing),
+        "duplicate_rows_after_cleaning": int(remaining_duplicates),
+        "original_column_count": int(original_columns),
+        "final_column_count": int(len(df.columns)),
+        "final_row_count": int(len(df)),
+        "course_counts": {
+            str(key): int(value)
+            for key, value in df["course"].value_counts().items()
+        },
+        "feature_engineering": [
+            "avg_parent_education",
+            "early_grade_average",
+            "grade_change_g1_to_g3",
+            "final_grade_band",
+        ],
+        "final_grade_band_counts": {
+            str(key): int(value)
+            for key, value in df["final_grade_band"]
+            .value_counts()
+            .items()
+        },
+        "validation": {
+            "at_least_1000_records": len(df) >= 1000,
+            "no_missing_cells": remaining_missing == 0,
+            "no_duplicate_rows": remaining_duplicates == 0,
+        },
     }
 
-    return data, report
+    return df, report
 
 
-def main() -> int:
+def create_visualizations(df: pd.DataFrame) -> None:
+    """Save simple plots documenting the processed dataset."""
+    SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Distribution of final grades.
+    plt.figure(figsize=(8, 5))
+    df["G3"].plot(
+        kind="hist",
+        bins=21,
+        edgecolor="black",
+    )
+    plt.title("Distribution of Final Student Grades")
+    plt.xlabel("Final grade (G3)")
+    plt.ylabel("Number of records")
+    plt.tight_layout()
+    plt.savefig(
+        SCREENSHOTS_DIR / "final_grade_distribution.png",
+        dpi=150,
+    )
+    plt.close()
+
+    # Number of records per course.
+    plt.figure(figsize=(7, 5))
+    df["course"].value_counts().plot(kind="bar")
+    plt.title("Records by Course")
+    plt.xlabel("Course")
+    plt.ylabel("Number of records")
+    plt.xticks(rotation=0)
+    plt.tight_layout()
+    plt.savefig(
+        SCREENSHOTS_DIR / "course_record_counts.png",
+        dpi=150,
+    )
+    plt.close()
+
+
+def main() -> None:
+    """Run the complete preprocessing workflow."""
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
     try:
-        files = download_course_files()
-        mathematics = load_course_csv(files["student-mat.csv"], "mathematics", "student-mat.csv")
-        portuguese = load_course_csv(files["student-por.csv"], "portuguese", "student-por.csv")
+        course_files = download_course_files()
 
-        source_counts = {
-            "student-mat.csv": int(len(mathematics)),
-            "student-por.csv": int(len(portuguese)),
-        }
-        raw = pd.concat([mathematics, portuguese], ignore_index=True, sort=False)
+        math_df = load_course_csv(
+            "student-mat.csv",
+            course_files["student-mat.csv"],
+            "Math",
+        )
+        portuguese_df = load_course_csv(
+            "student-por.csv",
+            course_files["student-por.csv"],
+            "Portuguese",
+        )
 
-        if len(raw) < MINIMUM_ROWS:
-            raise ValueError(
-                f"Dataset has {len(raw)} records; at least {MINIMUM_ROWS} are required."
-            )
+        combined_df = pd.concat(
+            [math_df, portuguese_df],
+            ignore_index=True,
+        )
 
-        cleaned, details = clean_dataset(raw)
-        if cleaned.isna().any().any():
-            raise ValueError("Validation failed: the cleaned dataset still contains missing cells.")
-        if cleaned.duplicated().any():
-            raise ValueError("Validation failed: duplicate rows remain after cleaning.")
+        cleaned_df, report = clean_and_engineer_features(combined_df)
 
         output_csv = PROCESSED_DIR / "cleaned_dataset.csv"
-        output_json = REPORT_DIR / "preprocessing_report.json"
-        cleaned.to_csv(output_csv, index=False)
+        output_json = REPORTS_DIR / "preprocessing_report.json"
 
-        report = {
-            "project": "YR NOVATECH AI & ML Internship - Task 2",
-            "dataset": "UCI Student Performance",
-            "dataset_source": SOURCE_PAGE,
-            "download_url": DATASET_URL,
-            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-            "source_file_row_counts": source_counts,
-            "source_rows_combined": int(sum(source_counts.values())),
-            "minimum_required_records": MINIMUM_ROWS,
-            "minimum_requirement_met": bool(len(cleaned) >= MINIMUM_ROWS),
-            "cleaned_csv": str(output_csv.relative_to(ROOT)).replace("\\", "/"),
-            "cleaning_and_validation": details,
-            "notes": [
-                "Rows represent course records from separate mathematics and Portuguese files.",
-                "Records from different course files are not assumed to be distinct people.",
-                "Features are engineered for the preprocessing exercise, not proof of causal relationships.",
-                "G1 and G2 are prior-period grades and are strongly related to G3 according to the UCI dataset documentation; consider this when using G3 as a prediction target.",
-            ],
-        }
-        output_json.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        cleaned_df.to_csv(output_csv, index=False)
 
-        print("\nPreprocessing completed successfully.")
-        print(f"Rows before cleaning: {details['rows_before_cleaning']}")
-        print(f"Rows after cleaning:  {details['rows_after_cleaning']}")
-        print(f"Columns after features: {details['columns_after_feature_engineering']}")
-        print(f"Null cells after: {details['null_cells_after']}")
-        print(f"Duplicate rows after: {details['duplicate_rows_after']}")
-        print(f"Clean dataset: {output_csv}")
-        print(f"Report: {output_json}")
-        print("\nInspect the report and output CSV before submitting.")
-        return 0
+        with output_json.open("w", encoding="utf-8") as file:
+            json.dump(report, file, indent=2, ensure_ascii=False)
 
-    except (RuntimeError, ValueError, OSError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
+        create_visualizations(cleaned_df)
+
+        print("\nPREPROCESSING COMPLETED SUCCESSFULLY")
+        print(f"Math course records: {len(math_df)}")
+        print(f"Portuguese course records: {len(portuguese_df)}")
+        print(f"Total cleaned records: {len(cleaned_df)}")
+        print(f"Final columns: {len(cleaned_df.columns)}")
+        print(f"Missing cells remaining: {cleaned_df.isna().sum().sum()}")
+        print(f"Duplicate rows remaining: {cleaned_df.duplicated().sum()}")
+        print(f"Cleaned dataset: {output_csv}")
+        print(f"Preprocessing report: {output_json}")
+        print(f"Visualizations: {SCREENSHOTS_DIR}")
+
+    except (
+        RuntimeError,
+        ValueError,
+        OSError,
+        pd.errors.ParserError,
+        requests.RequestException,
+    ) as exc:
+        raise SystemExit(f"ERROR: {exc}") from exc
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

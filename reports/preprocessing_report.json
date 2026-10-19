@@ -1,0 +1,36 @@
+{
+  "dataset_source": "https://archive.ics.uci.edu/dataset/320/student-performance",
+  "download_url": "https://archive.ics.uci.edu/static/public/320/student+performance.zip",
+  "original_rows": 1044,
+  "rows_after_duplicate_removal": 1044,
+  "duplicate_rows_before_cleaning": 0,
+  "duplicate_rows_removed": 0,
+  "missing_cells_before_cleaning": 0,
+  "missing_values_imputed_by_column": {},
+  "missing_cells_after_cleaning": 0,
+  "duplicate_rows_after_cleaning": 0,
+  "original_column_count": 35,
+  "final_column_count": 39,
+  "final_row_count": 1044,
+  "course_counts": {
+    "Portuguese": 649,
+    "Math": 395
+  },
+  "feature_engineering": [
+    "avg_parent_education",
+    "early_grade_average",
+    "grade_change_g1_to_g3",
+    "final_grade_band"
+  ],
+  "final_grade_band_counts": {
+    "Developing": 520,
+    "At risk": 230,
+    "Good": 224,
+    "Excellent": 70
+  },
+  "validation": {
+    "at_least_1000_records": true,
+    "no_missing_cells": true,
+    "no_duplicate_rows": true
+  }
+}
